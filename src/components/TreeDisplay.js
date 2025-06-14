@@ -11,6 +11,7 @@ function TreeDisplay({ treeData, onChange }) {
 
   // 记录被删除节点的原父key，便于恢复
   const [deletedNodes, setDeletedNodes] = useState([]); // [{node, originParentKey}]
+  const [replacedNodes, setReplacedNodes] = useState([]); // [{node, originParentKey}]
 
   useEffect(() => {
     if (treeData) {
@@ -54,6 +55,13 @@ function TreeDisplay({ treeData, onChange }) {
     const dropPosition =
       info.dropPosition - Number(dropPos[dropPos.length - 1]);
 
+    console.log("Drop info:", {
+      dropKey,
+      dragKey,
+      dropPosition,
+      dropToGap: info.dropToGap,
+    });
+
     const loop = (data, key, callback) => {
       for (let i = 0; i < data.length; i++) {
         if (data[i].key === key) {
@@ -74,10 +82,27 @@ function TreeDisplay({ treeData, onChange }) {
       dragObj = item;
     });
 
+    // 记录原始父级权限id，用于标记移动操作
+    const originalParentId = dragObj["父级权限id"];
+
     if (!info.dropToGap) {
       // 放置到节点上 - 添加为子节点
       loop(newData, dropKey, (item) => {
         item.children = item.children || [];
+        // 保存父节点的权限id
+        console.log("Parent node:", item);
+        const newParentId = item["权限id"];
+        dragObj["父级权限id"] = newParentId;
+        dragObj.children = dragObj.children || [];
+
+        // 如果父级权限id发生变化，标记为移动操作
+        if (originalParentId !== newParentId) {
+          dragObj["操作"] = "移动";
+          console.log(
+            `节点 ${dragObj.key} 被移动，原父级: ${originalParentId}, 新父级: ${newParentId}`
+          );
+        }
+
         item.children.unshift(dragObj);
       });
     } else if (
@@ -87,6 +112,20 @@ function TreeDisplay({ treeData, onChange }) {
     ) {
       loop(newData, dropKey, (item) => {
         item.children = item.children || [];
+        // 保存父节点的权限id
+        console.log("Parent node:", item);
+        const newParentId = item["权限id"];
+        dragObj["父级权限id"] = newParentId;
+        dragObj.children = dragObj.children || [];
+
+        // 如果父级权限id发生变化，标记为移动操作
+        if (originalParentId !== newParentId) {
+          dragObj["操作"] = "移动";
+          console.log(
+            `节点 ${dragObj.key} 被移动，原父级: ${originalParentId}, 新父级: ${newParentId}`
+          );
+        }
+
         item.children.unshift(dragObj);
       });
     } else {
@@ -103,8 +142,9 @@ function TreeDisplay({ treeData, onChange }) {
       }
     }
 
+    console.log("After drop:", newData);
     setData(newData);
-    onChange(newData, deletedNodes);
+    onChange(newData, deletedNodes, [...replacedNodes]);
   };
 
   // 删除节点及其子树
@@ -127,16 +167,130 @@ function TreeDisplay({ treeData, onChange }) {
     };
     const [newData, removedNode] = removeNode([...data], key);
     if (removedNode) {
-      setDeletedNodes((prev) => [
-        ...prev,
-        { node: removedNode, originParentKey: parentKey },
-      ]);
-      setData(newData);
-      // 不修改 expandedKeys，保持原样
-      onChange(newData, [
+      // 先创建新的 deletedNodes 数组，包含当前要删除的节点
+      const updatedDeletedNodes = [
         ...deletedNodes,
         { node: removedNode, originParentKey: parentKey },
-      ]);
+      ];
+
+      // 更新状态
+      setDeletedNodes(updatedDeletedNodes);
+      setData(newData);
+
+      // 使用更新后的 deletedNodes 调用 onChange
+      onChange(newData, updatedDeletedNodes, [...replacedNodes]);
+
+      // 标记节点为删除操作
+      if (removedNode["操作"] === undefined) {
+        removedNode["操作"] = "删除";
+      }
+    }
+  };
+
+  // 递归查找节点
+  const findNode = (nodes, k) => {
+    for (const n of nodes) {
+      if (n.key === k) return n;
+      if (n.children) {
+        const found = findNode(n.children, k);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  // 替换节点及其子树
+  const handleReplace = (key, parentKey = null) => {
+    console.log("Replace node:", { key, parentKey });
+    console.log("Current data:", data);
+
+    // 首先找到父节点，获取其权限id
+    let parentPermissionId = null;
+    if (parentKey) {
+      const parentNode = findNode(data, parentKey);
+      if (parentNode) {
+        parentPermissionId = parentNode["权限id"];
+        console.log("Found parent node, 权限id:", parentPermissionId);
+      }
+    }
+
+    const removeNode = (nodes, key) => {
+      let removed = null;
+      const filtered = nodes.filter((node) => {
+        if (node.key === key) {
+          removed = node;
+          return false;
+        }
+        if (node.children) {
+          const [newChildren, childRemoved] = removeNode(node.children, key);
+          node.children = newChildren;
+          if (childRemoved) removed = childRemoved;
+        }
+        return true;
+      });
+      return [filtered, removed];
+    };
+
+    const [newData, removedNode] = removeNode([...data], key);
+    if (removedNode) {
+      console.log("Removed node:", removedNode);
+      // 保存原始权限id
+      const originalPermissionId = removedNode["权限id"];
+      // 保存原始权限码
+      const originalPermissionCode = removedNode["权限码"];
+
+      // 使用父节点的权限id
+      if (parentPermissionId) {
+        console.log("Using parent permission id:", parentPermissionId);
+        removedNode["权限id"] = parentPermissionId;
+      }
+
+      // 标记为替换
+      removedNode["操作"] = "替换";
+      removedNode["原始权限id"] = originalPermissionId;
+      // 确保保留原始权限码
+      if (originalPermissionCode) {
+        removedNode["原始权限码"] = originalPermissionCode;
+      }
+
+      console.log("After replace:", removedNode);
+
+      setReplacedNodes((prev) => {
+        // 用 key 去重，保证所有被替换过的节点都在
+        const map = new Map();
+        prev.forEach((item) => {
+          if (item.node && item.node.key) map.set(item.node.key, item);
+        });
+
+        // 确保使用原始的 key 作为 map 的键，而不是修改后的权限id
+        const nodeKey = key;
+        console.log(
+          `设置替换节点: key=${nodeKey}, 原权限id=${originalPermissionId}, 新权限id=${removedNode["权限id"]}, 权限码=${originalPermissionCode}`
+        );
+
+        map.set(nodeKey, {
+          node: removedNode,
+          originParentKey: parentKey,
+          originalPermissionId: originalPermissionId,
+          originalPermissionCode: originalPermissionCode,
+        });
+        const updated = Array.from(map.values());
+
+        // 调试: 打印更新后的替换节点列表
+        console.log(
+          "更新后的替换节点列表:",
+          updated.map((item) => ({
+            key: item.node.key,
+            originalPermissionId: item.originalPermissionId,
+            originalPermissionCode: item.originalPermissionCode,
+            newPermissionId: item.node["权限id"],
+          }))
+        );
+
+        setData(newData);
+        onChange(newData, deletedNodes, updated);
+        return updated;
+      });
     }
   };
 
@@ -212,7 +366,97 @@ function TreeDisplay({ treeData, onChange }) {
     setDeletedNodes(deletedCopy);
     setData(newData);
     // 不修改 expandedKeys，保持原样
-    onChange(newData, deletedCopy);
+    onChange(newData, deletedCopy, replacedNodes);
+  };
+
+  // 递归查找并恢复已替换节点
+  const handleRestoreReplaced = (key) => {
+    const findAndRemove = (nodes, key) => {
+      for (let i = 0; i < nodes.length; i++) {
+        const item = nodes[i];
+        if (item.node.key === key) {
+          const [removed] = nodes.splice(i, 1);
+          return {
+            found: removed,
+            parentOriginKey: item.originParentKey,
+            originalPermissionId: item.originalPermissionId,
+          };
+        }
+        if (item.node.children && item.node.children.length) {
+          const result = findAndRemove(
+            item.node.children.map((child) => ({
+              node: child,
+              originParentKey: item.node.key,
+              originalPermissionId: child["原始权限id"] || child["权限id"],
+            })),
+            key
+          );
+          if (result && result.found) {
+            item.node.children = item.node.children.filter(
+              (child) => child.key !== key
+            );
+            return result;
+          }
+        }
+      }
+      return null;
+    };
+
+    const replacedCopy = JSON.parse(JSON.stringify(replacedNodes));
+    const result = findAndRemove(replacedCopy, key);
+    if (!result || !result.found) return;
+
+    const { node } = result.found;
+    let parentKey = result.parentOriginKey;
+
+    // 恢复原始权限id
+    if (result.originalPermissionId) {
+      node["权限id"] = result.originalPermissionId;
+    }
+
+    // 清除操作标记和原始权限id
+    delete node["操作"];
+    delete node["原始权限id"];
+
+    const findNode = (nodes, k) => {
+      for (const n of nodes) {
+        if (n.key === k) return n;
+        if (n.children) {
+          const found = findNode(n.children, k);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    let dataCopy = [...data];
+    if (!findNode(dataCopy, parentKey)) {
+      const root2 = findNode(dataCopy, 2) || findNode(dataCopy, "2");
+      parentKey = root2 ? root2.key : null;
+    }
+
+    const insertNode = (nodes, parentKey, node) => {
+      if (!parentKey) return [...nodes, node];
+      return nodes.map((n) => {
+        if (n.key === parentKey) {
+          return {
+            ...n,
+            children: n.children ? [...n.children, node] : [node],
+          };
+        }
+        if (n.children) {
+          return { ...n, children: insertNode(n.children, parentKey, node) };
+        }
+        return n;
+      });
+    };
+
+    const newData = insertNode(dataCopy, parentKey, node);
+    setReplacedNodes(replacedCopy);
+    setData(newData);
+    // 恢复替换节点后，传递完整的 replacedCopy 给 App
+    console.log("恢复替换节点后的 replacedCopy:", replacedCopy);
+    onChange(newData, deletedNodes, replacedCopy);
   };
 
   // 展开所有节点
@@ -236,6 +480,19 @@ function TreeDisplay({ treeData, onChange }) {
     const updateTitle = (nodes) =>
       nodes.map((node) => {
         if (node.key === key) {
+          // 如果标题发生变化，标记为修改操作
+          const originalTitle = node.title;
+          if (originalTitle !== value) {
+            console.log(
+              `节点 ${key} 标题被修改，原标题: ${originalTitle}, 新标题: ${value}`
+            );
+            return {
+              ...node,
+              title: value,
+              操作: "修改",
+              原始标题: originalTitle,
+            };
+          }
           return { ...node, title: value };
         }
         if (node.children) {
@@ -248,7 +505,7 @@ function TreeDisplay({ treeData, onChange }) {
     setEditingKey(null);
     setEditingValue("");
     setInputPos({ left: 0, top: 0, width: 0 });
-    onChange(newData, deletedNodes);
+    onChange(newData, deletedNodes, replacedNodes);
   };
 
   // 只在渲染时处理 title
@@ -292,12 +549,42 @@ function TreeDisplay({ treeData, onChange }) {
                 >
                   删除
                 </Button>
+                <Button
+                  size="small"
+                  type="primary"
+                  style={{ marginLeft: 8, height: 18, width: 40 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleReplace(node.key, parentKey);
+                  }}
+                >
+                  替换
+                </Button>
                 <span
                   style={{ marginLeft: 8, color: "#888", fontSize: "12px" }}
                 >
-                  {node["权限码"] && node["权限类型"]
-                    ? `${node["权限码"]}-${node["权限类型"]}`
-                    : ""}
+                  {node["权限码"] && node["权限类型"] ? (
+                    <>
+                      <span style={{ color: "#1890ff", fontWeight: "bold" }}>
+                        {node["权限码"]}
+                      </span>{" "}
+                      <span style={{ color: "#52c41a" }}>
+                        {node["权限类型"]}
+                      </span>
+                    </>
+                  ) : (
+                    ""
+                  )}
+                  {node["原权限id"] && (
+                    <span style={{ marginLeft: 8, color: "#ff4d4f" }}>
+                      (原权限id: {node["原权限id"]})
+                    </span>
+                  )}
+                  {node["新权限id"] && (
+                    <span style={{ marginLeft: 8, color: "#722ed1" }}>
+                      (新权限id: {node["新权限id"]})
+                    </span>
+                  )}
                 </span>
               </>
             )}
@@ -313,13 +600,52 @@ function TreeDisplay({ treeData, onChange }) {
       };
     });
 
-  // 合并已删除节点到树根，已删除区展示为树结构
+  // 获取完整树数据，包括操作标记
   const getFullTreeData = () => {
-    const base = Array.isArray(data) ? data : [data];
-    if (!deletedNodes.length) return base;
-    // 递归构建已删除区树结构
+    const processNode = (node) => {
+      const processedNode = { ...node };
+      if (node.children) {
+        processedNode.children = node.children.map(processNode);
+      }
+      return processedNode;
+    };
+
+    const base = Array.isArray(data)
+      ? data.map(processNode)
+      : [processNode(data)];
+    if (!deletedNodes.length && !replacedNodes.length) return base;
+
+    console.log("Building full tree data:", {
+      base,
+      deletedNodes,
+      replacedNodes,
+    });
+
     const buildDeletedTree = (nodes) =>
       nodes.map((item) => {
+        // 标记当前节点为删除操作
+        if (item.node && item.node["操作"] === undefined) {
+          item.node["操作"] = "删除";
+        }
+
+        // 递归标记所有子节点为删除操作
+        const markChildrenAsDeleted = (node) => {
+          if (!node) return;
+
+          if (node["操作"] === undefined) {
+            node["操作"] = "删除";
+          }
+
+          if (node.children && node.children.length) {
+            node.children.forEach(markChildrenAsDeleted);
+          }
+        };
+
+        // 处理子节点
+        if (item.node && item.node.children) {
+          item.node.children.forEach(markChildrenAsDeleted);
+        }
+
         return {
           ...item.node,
           title: (
@@ -345,14 +671,148 @@ function TreeDisplay({ treeData, onChange }) {
             : undefined,
         };
       });
-    return [
+
+    const buildReplacedTree = (nodes) =>
+      nodes.map((item) => {
+        // 新增：渲染时带出原权限id和新权限id
+        const originalId = item.originalPermissionId;
+        const newId = item.node["权限id"];
+        return {
+          ...item.node,
+          title: (
+            <span>
+              {item.node.title}
+              <span style={{ marginLeft: 8, color: "#ff4d4f" }}>
+                {originalId ? `(原权限id: ${originalId})` : ""}
+              </span>
+              <span style={{ marginLeft: 8, color: "#722ed1" }}>
+                {newId && originalId && newId !== originalId
+                  ? `(新权限id: ${newId})`
+                  : ""}
+              </span>
+              <Button
+                size="small"
+                type="link"
+                style={{ marginLeft: 8 }}
+                onClick={() => handleRestoreReplaced(item.node.key)}
+              >
+                恢复
+              </Button>
+            </span>
+          ),
+          children: item.node.children
+            ? buildReplacedTree(
+                item.node.children.map((child) => ({
+                  node: child,
+                  originParentKey: item.node.key,
+                  originalPermissionId: child["原始权限id"] || child["权限id"],
+                }))
+              )
+            : undefined,
+        };
+      });
+
+    const result = [
       ...base,
       {
         key: "deleted-root",
         title: "已删除",
         children: buildDeletedTree(deletedNodes),
       },
+      {
+        key: "replaced-root",
+        title: "已替换",
+        children: buildReplacedTree(replacedNodes),
+      },
     ];
+
+    console.log("Final tree data:", result);
+    return result;
+  };
+
+  // 递归拍平树结构，包含"已替换"节点
+  function flattenTree(nodes, parentId = "", isInDeletedRoot = false) {
+    let result = [];
+    nodes.forEach((node) => {
+      // 检查是否在"已删除"根节点下
+      if (node.key === "deleted-root") {
+        if (node.children && node.children.length) {
+          // 传递 isInDeletedRoot = true 标记进入已删除区域
+          result = result.concat(flattenTree(node.children, "", true));
+        }
+        return;
+      } else if (node.key === "replaced-root") {
+        if (node.children && node.children.length) {
+          result = result.concat(flattenTree(node.children, "", false));
+        }
+        return;
+      }
+
+      const { children, ...rest } = node;
+      rest["父级权限id"] = parentId;
+
+      // 如果节点在"已删除"根节点下，标记为"删除"
+      if (isInDeletedRoot) {
+        rest["操作"] = "删除";
+      }
+
+      result.push(rest);
+      if (children && children.length) {
+        // 传递 isInDeletedRoot 参数，保持删除状态
+        result = result.concat(
+          flattenTree(children, node["权限id"], isInDeletedRoot)
+        );
+      }
+    });
+    return result;
+  }
+
+  // 导出 Excel 逻辑
+  const exportToExcel = () => {
+    // 使用XLSX库
+    const XLSX = require("xlsx");
+
+    // 获取完整树数据并拍平
+    const treeData = getFullTreeData();
+    const flatRows = flattenTree(treeData);
+
+    console.log("Exporting data:", flatRows);
+
+    // 导出数据
+    const exportData = flatRows.map((row) => ({
+      权限码: row["权限码"] || "",
+      权限名称: row["权限名称"] || row.title || "",
+      权限类型: row["权限类型"] || "",
+      权限id: row["权限id"] || row.key || "",
+      父级权限名称: row["父级权限名称"] || "",
+      父级权限id: row["父级权限id"] || "",
+      权限路径: row["权限路径"] || "",
+      是否有子节点:
+        row["是否有子节点"] ||
+        (row.children && row.children.length ? "是" : "否"),
+      站点: row["站点"] || "",
+      操作: row["操作"] || "",
+    }));
+
+    const exportColumns = [
+      "权限码",
+      "权限名称",
+      "权限类型",
+      "权限id",
+      "父级权限名称",
+      "父级权限id",
+      "权限路径",
+      "是否有子节点",
+      "站点",
+      "操作",
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(exportData, { header: exportColumns });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    XLSX.writeFile(wb, "tree-data.xlsx");
+
+    console.log("Excel exported successfully");
   };
 
   return (
