@@ -1,4 +1,6 @@
-# Getting Started with Create React App
+# json-tree-editor
+
+上传 exl，将扁平权限通过父 id 生成树形结构；改变树形结构后可导出新的 exl
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
