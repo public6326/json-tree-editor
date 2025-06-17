@@ -719,7 +719,9 @@ function TreeDisplay({ treeData, onChange }) {
             <span>
               {item.node.title}
               <span style={{ marginLeft: 8, color: "#ff4d4f" }}>
-                {originalId ? `(原权限id: ${originalId})` : ""}
+                {item.node["父级权限码"]
+                  ? `(新权限码: ${item.node["父级权限码"]})`
+                  : ""}
               </span>
               <span style={{ marginLeft: 8, color: "#722ed1" }}>
                 {newId && originalId && newId !== originalId
