@@ -545,8 +545,16 @@ function TreeDisplay({ treeData, onChange }) {
   };
 
   // 只在渲染时处理 title
-  const processTreeData = (nodes, parentKey = null, inDeleted = false) =>
+  const processTreeData = (nodes, parentKey = null, inSpecialRoot = false) =>
     nodes.map((node) => {
+      // 检查是否位于特殊根节点下（已删除或已替换）
+      let isInSpecialRoot =
+        inSpecialRoot ||
+        node.key === "deleted-root" ||
+        node.key === "replaced-root" ||
+        parentKey === "deleted-root" ||
+        parentKey === "replaced-root";
+
       let titleContent;
       if (editingKey === node.key) {
         // 编辑时不渲染 title，浮动 Input 由外部渲染
@@ -572,58 +580,61 @@ function TreeDisplay({ treeData, onChange }) {
             title="双击编辑名称"
           >
             {node.title}
-            {!inDeleted && node.key !== "deleted" && (
-              <>
-                <Button
-                  size="small"
-                  danger
-                  style={{ marginLeft: 12, height: 18, width: 40 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(node.key, parentKey);
-                  }}
-                >
-                  删除
-                </Button>
-                <Button
-                  size="small"
-                  type="primary"
-                  style={{ marginLeft: 8, height: 18, width: 40 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleReplace(node.key, parentKey);
-                  }}
-                >
-                  替换
-                </Button>
-                <span
-                  style={{ marginLeft: 8, color: "#888", fontSize: "12px" }}
-                >
-                  {node["权限码"] && node["权限类型"] ? (
-                    <>
-                      <span style={{ color: "#1890ff", fontWeight: "bold" }}>
-                        {node["权限码"]}
-                      </span>{" "}
-                      <span style={{ color: "#52c41a" }}>
-                        {node["权限类型"]}
+            {!isInSpecialRoot &&
+              node.key !== "deleted" &&
+              node.key !== "deleted-root" &&
+              node.key !== "replaced-root" && (
+                <>
+                  <Button
+                    size="small"
+                    danger
+                    style={{ marginLeft: 12, height: 18, width: 40 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(node.key, parentKey);
+                    }}
+                  >
+                    删除
+                  </Button>
+                  <Button
+                    size="small"
+                    type="primary"
+                    style={{ marginLeft: 8, height: 18, width: 40 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleReplace(node.key, parentKey);
+                    }}
+                  >
+                    替换
+                  </Button>
+                  <span
+                    style={{ marginLeft: 8, color: "#888", fontSize: "12px" }}
+                  >
+                    {node["权限码"] && node["权限类型"] ? (
+                      <>
+                        <span style={{ color: "#1890ff", fontWeight: "bold" }}>
+                          {node["权限码"]}
+                        </span>{" "}
+                        <span style={{ color: "#52c41a" }}>
+                          {node["权限类型"]}
+                        </span>
+                      </>
+                    ) : (
+                      ""
+                    )}
+                    {node["原权限id"] && (
+                      <span style={{ marginLeft: 8, color: "#ff4d4f" }}>
+                        (原权限id: {node["原权限id"]})
                       </span>
-                    </>
-                  ) : (
-                    ""
-                  )}
-                  {node["原权限id"] && (
-                    <span style={{ marginLeft: 8, color: "#ff4d4f" }}>
-                      (原权限id: {node["原权限id"]})
-                    </span>
-                  )}
-                  {node["新权限id"] && (
-                    <span style={{ marginLeft: 8, color: "#722ed1" }}>
-                      (新权限id: {node["新权限id"]})
-                    </span>
-                  )}
-                </span>
-              </>
-            )}
+                    )}
+                    {node["新权限id"] && (
+                      <span style={{ marginLeft: 8, color: "#722ed1" }}>
+                        (新权限id: {node["新权限id"]})
+                      </span>
+                    )}
+                  </span>
+                </>
+              )}
           </span>
         );
       }
@@ -631,7 +642,7 @@ function TreeDisplay({ treeData, onChange }) {
         ...node,
         title: titleContent,
         children: node.children
-          ? processTreeData(node.children, node.key, inDeleted)
+          ? processTreeData(node.children, node.key, isInSpecialRoot)
           : undefined,
       };
     });
