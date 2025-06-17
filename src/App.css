@@ -72,12 +72,17 @@
 }
 
 .json-input {
-
   display: flex;
   flex-direction: column;
 }
 
-.json-input h2 {
+.json-upload {
+  display: flex;
+  flex-direction: column;
+}
+
+.json-input h2,
+.json-upload h2 {
   margin-top: 0;
 }
 

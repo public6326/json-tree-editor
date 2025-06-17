@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import { Layout, Row, Col, message, Button } from "antd";
-import { CopyOutlined, DownloadOutlined } from "@ant-design/icons";
-import JsonInput from "./components/JsonInput";
+import { DownloadOutlined } from "@ant-design/icons";
+import JsonUpload from "./components/JsonInput";
 import TreeDisplay from "./components/TreeDisplay";
 import * as XLSX from "xlsx";
 import "./App.css";
@@ -14,7 +14,6 @@ function App() {
   const [flatData, setFlatData] = useState([]);
   const [columns, setColumns] = useState([]);
   const [deletedKeys, setDeletedKeys] = useState([]);
-  // 全局累积所有被替换节点
   const replacedNodesRef = useRef([]);
 
   const handleJsonSubmit = (jsonData) => {
@@ -23,7 +22,6 @@ function App() {
   };
 
   const handleExcelParsed = (data, cols) => {
-    // 只在上传时初始化 flatData/columns
     if (!flatData.length) {
       const patched = data.map((row) => ({
         ...row,
@@ -44,18 +42,32 @@ function App() {
     }
     const newNameCol = "权限名称（新）";
     const newParentIdCol = "父级权限id（新）";
+    const newPermissionCodeCol = "权限码（新）";
     const actionCol = "操作";
     const exportData = flatData.map((row) => {
       const result = {};
       result[newNameCol] = row._newName || "";
       result[newParentIdCol] = row._newParentId || "";
-      result[actionCol] = row._action || "";
+      result[newPermissionCodeCol] = row._newPermissionCode || "";
+
+      let operation = row._action || "";
+      if (operation.includes("替换") && operation.includes("移动")) {
+        operation = "替换";
+      }
+      result[actionCol] = operation;
+
       columns.forEach((col) => {
         result[col] = row[col];
       });
       return result;
     });
-    const exportColumns = [newNameCol, newParentIdCol, actionCol, ...columns];
+    const exportColumns = [
+      newNameCol,
+      newParentIdCol,
+      newPermissionCodeCol,
+      actionCol,
+      ...columns,
+    ];
     const ws = XLSX.utils.json_to_sheet(exportData, { header: exportColumns });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
@@ -147,85 +159,46 @@ function App() {
 
     // 3. 构建替换信息映射
     const replacedInfo = {};
-    // 创建一个从原始权限id到替换信息的映射
-    const originalIdToReplacedInfo = {};
-    // 创建一个从权限码到替换信息的映射
-    const permissionCodeToReplacedInfo = {};
+    // 创建一个从key到父级权限码的映射
+    const keyToParentPermissionCode = {};
+
     allReplacedNodes.forEach((item) => {
       if (item.node && item.node.key) {
         const key = String(item.node.key);
+        // 存储父级权限码信息
+        if (item.parentPermissionCode) {
+          keyToParentPermissionCode[key] = item.parentPermissionCode;
+        }
+
+        // 记录替换信息，但不修改原始权限id
         replacedInfo[key] = {
-          newPermissionId: item.node["权限id"],
           originalPermissionId: item.originalPermissionId,
           originalPermissionCode: item.originalPermissionCode,
+          parentPermissionCode: item.parentPermissionCode,
         };
-
-        // 同时用原始权限id作为键建立映射
-        if (item.originalPermissionId) {
-          const originalId = String(item.originalPermissionId);
-          originalIdToReplacedInfo[originalId] = {
-            newPermissionId: item.node["权限id"],
-            originalPermissionId: originalId,
-            originalPermissionCode: item.originalPermissionCode,
-          };
-        }
-
-        // 使用权限码作为键建立映射
-        if (item.originalPermissionCode) {
-          const permissionCode = String(item.originalPermissionCode);
-          permissionCodeToReplacedInfo[permissionCode] = {
-            newPermissionId: item.node["权限id"],
-            originalPermissionId: item.originalPermissionId,
-            permissionCode: permissionCode,
-          };
-          console.log(
-            `添加权限码映射: ${permissionCode} -> ${item.node["权限id"]}`
-          );
-        }
       }
     });
 
     console.log("替换信息 keys:", Object.keys(replacedInfo));
-    console.log("原始权限id映射 keys:", Object.keys(originalIdToReplacedInfo));
-    console.log("权限码映射 keys:", Object.keys(permissionCodeToReplacedInfo));
+    console.log("父级权限码映射:", keyToParentPermissionCode);
 
     // 4. 更新 flatData
     if (flatData.length && columns.length) {
       const idKey = "权限id";
       const codeKey = "权限码";
 
-      // 调试：打印 flatData 中的所有 key
-      const flatDataKeys = flatData.map((row) => String(row[idKey]));
-      const flatDataCodes = flatData.map((row) => String(row[codeKey]));
-      console.log("flatData 中的所有 key:", flatDataKeys);
-      console.log("flatData 中的所有权限码:", flatDataCodes);
-
-      // 检查 flatData 中是否存在替换信息中的 key
-      Object.keys(permissionCodeToReplacedInfo).forEach((code) => {
-        const exists = flatDataCodes.includes(code);
-        console.log(
-          `权限码 ${code} 在 flatData 中${exists ? "存在" : "不存在"}`
-        );
-      });
-
       const newFlat = flatData.map((row) => {
         const result = { ...row };
         const key = String(result[idKey]);
         const code = String(result[codeKey]);
 
-        // 调试：打印当前处理的行
-        console.log(
-          `处理行: key=${key}, 权限码=${code}, 在映射中: ${!!permissionCodeToReplacedInfo[
-            code
-          ]}`
-        );
-
         // 重置操作字段
         result._newName = "";
         result._newParentId = "";
+        result._newPermissionCode = "";
         result._action = "";
 
-        // 处理删除的节点 - 通过key、父级权限id或权限码判断
+        // 处理删除的节点
         if (
           deletedKeySet.has(key) ||
           (result["父级权限id"] &&
@@ -235,20 +208,13 @@ function App() {
         ) {
           result._action = "删除";
         }
-        // 处理替换的节点 - 优先使用权限码匹配
-        else if (code && permissionCodeToReplacedInfo[code]) {
-          console.log(`标记替换(权限码): ${code}`);
+        // 处理替换的节点 - 查找是否有对应的替换信息
+        else if (replacedInfo[key]) {
           result._action = "替换";
-          if (permissionCodeToReplacedInfo[code].newPermissionId) {
-            result[idKey] = permissionCodeToReplacedInfo[code].newPermissionId;
-          }
-        }
-        // 如果权限码没有匹配，尝试使用权限id
-        else if (key && originalIdToReplacedInfo[key]) {
-          console.log(`标记替换(权限id): ${key}`);
-          result._action = "替换";
-          if (originalIdToReplacedInfo[key].newPermissionId) {
-            result[idKey] = originalIdToReplacedInfo[key].newPermissionId;
+          // 不修改原始权限id
+          // 添加父级权限码到"权限码（新）"列
+          if (keyToParentPermissionCode[key]) {
+            result._newPermissionCode = keyToParentPermissionCode[key];
           }
         }
         // 处理其他操作（移动和修改）
@@ -303,29 +269,10 @@ function App() {
         `处理完成: ${replacedCount}行标记为替换, ${deletedCount}行标记为删除`
       );
 
-      // 输出被标记为替换的行
-      console.log(
-        "被标记为替换的行:",
-        newFlat
-          .filter((row) => row._action === "替换")
-          .map((row) => `${row["权限id"]} (权限码: ${row["权限码"] || "未知"})`)
-      );
-
       setFlatData(newFlat);
     }
 
     console.log("handleTreeChange 处理结束");
-  };
-
-  const copyToClipboard = () => {
-    navigator.clipboard
-      .writeText(jsonString)
-      .then(() => {
-        message.success("JSON已复制到剪贴板");
-      })
-      .catch(() => {
-        message.error("复制失败");
-      });
   };
 
   return (
@@ -334,56 +281,23 @@ function App() {
         <div className="site-layout-content">
           <Row gutter={16} className="horizontal-layout">
             <Col span={6}>
-              <JsonInput
-                onSubmit={handleJsonSubmit}
-                onExcelParsed={handleExcelParsed}
-                value={jsonString}
+              <JsonUpload
                 onChange={handleJsonSubmit}
+                onExcelParsed={handleExcelParsed}
               />
+              <Button
+                type="primary"
+                icon={<DownloadOutlined />}
+                onClick={downloadExcel}
+                style={{ marginTop: 16, width: "100%" }}
+              >
+                下载 excel
+              </Button>
             </Col>
 
-            {treeData ? (
-              <>
-                <Col span={12}>
-                  <TreeDisplay
-                    treeData={treeData}
-                    onChange={handleTreeChange}
-                  />
-                </Col>
-
-                <Col span={6}>
-                  <div className="json-output">
-                    <div className="output-header">
-                      <h3>JSON输出</h3>
-                      <div className="output-actions">
-                        <Button
-                          type="primary"
-                          icon={<CopyOutlined />}
-                          onClick={copyToClipboard}
-                          style={{ marginRight: 8 }}
-                        >
-                          复制 json
-                        </Button>
-                        <Button
-                          type="primary"
-                          icon={<DownloadOutlined />}
-                          onClick={downloadExcel}
-                        >
-                          下载 excel
-                        </Button>
-                      </div>
-                    </div>
-                    <pre>{jsonString}</pre>
-                  </div>
-                </Col>
-              </>
-            ) : (
-              <Col span={18}>
-                <div className="empty-state">
-                  <p>请在左侧输入JSON数据并点击"解析并显示"按钮</p>
-                </div>
-              </Col>
-            )}
+            <Col span={18}>
+              <TreeDisplay treeData={treeData} onChange={handleTreeChange} />
+            </Col>
           </Row>
         </div>
       </Content>

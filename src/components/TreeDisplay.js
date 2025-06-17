@@ -85,6 +85,31 @@ function TreeDisplay({ treeData, onChange }) {
     // 记录原始父级权限id，用于标记移动操作
     const originalParentId = dragObj["父级权限id"];
 
+    // 标记节点为移动操作的函数
+    const markNodeAsMoved = (node, newParentId) => {
+      if (originalParentId !== newParentId) {
+        // 如果节点已经有操作标记（如替换），保留原有操作并添加移动标记
+        const existingOperation = node["操作"] || "";
+        if (!existingOperation.includes("移动")) {
+          node["操作"] = existingOperation
+            ? `${existingOperation},移动`
+            : "移动";
+        }
+
+        // 更新父级权限id
+        node["父级权限id"] = newParentId;
+
+        console.log(
+          `节点 ${node.key} 被移动，原父级: ${originalParentId}, 新父级: ${newParentId}`
+        );
+
+        // 递归标记所有子节点
+        if (node.children && node.children.length > 0) {
+          node.children.forEach((child) => markNodeAsMoved(child, newParentId));
+        }
+      }
+    };
+
     if (!info.dropToGap) {
       // 放置到节点上 - 添加为子节点
       loop(newData, dropKey, (item) => {
@@ -95,13 +120,8 @@ function TreeDisplay({ treeData, onChange }) {
         dragObj["父级权限id"] = newParentId;
         dragObj.children = dragObj.children || [];
 
-        // 如果父级权限id发生变化，标记为移动操作
-        if (originalParentId !== newParentId) {
-          dragObj["操作"] = "移动";
-          console.log(
-            `节点 ${dragObj.key} 被移动，原父级: ${originalParentId}, 新父级: ${newParentId}`
-          );
-        }
+        // 标记节点及其所有子节点为移动操作
+        markNodeAsMoved(dragObj, newParentId);
 
         item.children.unshift(dragObj);
       });
@@ -118,13 +138,8 @@ function TreeDisplay({ treeData, onChange }) {
         dragObj["父级权限id"] = newParentId;
         dragObj.children = dragObj.children || [];
 
-        // 如果父级权限id发生变化，标记为移动操作
-        if (originalParentId !== newParentId) {
-          dragObj["操作"] = "移动";
-          console.log(
-            `节点 ${dragObj.key} 被移动，原父级: ${originalParentId}, 新父级: ${newParentId}`
-          );
-        }
+        // 标记节点及其所有子节点为移动操作
+        markNodeAsMoved(dragObj, newParentId);
 
         item.children.unshift(dragObj);
       });
@@ -140,11 +155,41 @@ function TreeDisplay({ treeData, onChange }) {
       } else {
         ar.splice(i + 1, 0, dragObj);
       }
+
+      // 在else分支中也需要标记移动操作
+      // 需要找到新的父级权限id
+      let newParentId = null;
+      // 找到当前数组的父节点
+      const findParent = (nodes, targetArray) => {
+        for (const node of nodes) {
+          if (node.children === targetArray) {
+            return node;
+          }
+          if (node.children) {
+            const found = findParent(node.children, targetArray);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const parent = findParent(newData, ar);
+      if (parent) {
+        newParentId = parent["权限id"];
+      }
+
+      // 如果找到了新的父级权限id且与原始不同，标记为移动
+      if (newParentId && originalParentId !== newParentId) {
+        dragObj["父级权限id"] = newParentId;
+
+        // 标记节点及其所有子节点为移动操作
+        markNodeAsMoved(dragObj, newParentId);
+      }
     }
 
     console.log("After drop:", newData);
     setData(newData);
-    onChange(newData, deletedNodes, [...replacedNodes]);
+    onChange(newData, deletedNodes, replacedNodes);
   };
 
   // 删除节点及其子树
@@ -204,13 +249,13 @@ function TreeDisplay({ treeData, onChange }) {
     console.log("Replace node:", { key, parentKey });
     console.log("Current data:", data);
 
-    // 首先找到父节点，获取其权限id
-    let parentPermissionId = null;
+    // 首先找到父节点，获取其权限码
+    let parentPermissionCode = null;
     if (parentKey) {
       const parentNode = findNode(data, parentKey);
       if (parentNode) {
-        parentPermissionId = parentNode["权限id"];
-        console.log("Found parent node, 权限id:", parentPermissionId);
+        parentPermissionCode = parentNode["权限码"];
+        console.log("Found parent node, 权限码:", parentPermissionCode);
       }
     }
 
@@ -239,33 +284,28 @@ function TreeDisplay({ treeData, onChange }) {
       // 保存原始权限码
       const originalPermissionCode = removedNode["权限码"];
 
-      // 使用父节点的权限id
-      if (parentPermissionId) {
-        console.log("Using parent permission id:", parentPermissionId);
-        removedNode["权限id"] = parentPermissionId;
-      }
-
-      // 标记为替换
+      // 标记为替换，但不修改原始权限id
       removedNode["操作"] = "替换";
-      removedNode["原始权限id"] = originalPermissionId;
-      // 确保保留原始权限码
-      if (originalPermissionCode) {
-        removedNode["原始权限码"] = originalPermissionCode;
+      // 记录父级权限码，用于导出时添加到"权限码（新）"列
+      if (parentPermissionCode) {
+        removedNode["父级权限码"] = parentPermissionCode;
       }
 
       console.log("After replace:", removedNode);
 
+      // 使用Map避免重复
       setReplacedNodes((prev) => {
-        // 用 key 去重，保证所有被替换过的节点都在
         const map = new Map();
         prev.forEach((item) => {
-          if (item.node && item.node.key) map.set(item.node.key, item);
+          // 确保使用原始的 key 作为 map 的键
+          const nodeKey = item.node.key;
+          map.set(nodeKey, item);
         });
 
         // 确保使用原始的 key 作为 map 的键，而不是修改后的权限id
         const nodeKey = key;
         console.log(
-          `设置替换节点: key=${nodeKey}, 原权限id=${originalPermissionId}, 新权限id=${removedNode["权限id"]}, 权限码=${originalPermissionCode}`
+          `设置替换节点: key=${nodeKey}, 原权限id=${originalPermissionId}, 权限码=${originalPermissionCode}, 父级权限码=${parentPermissionCode}`
         );
 
         map.set(nodeKey, {
@@ -273,17 +313,18 @@ function TreeDisplay({ treeData, onChange }) {
           originParentKey: parentKey,
           originalPermissionId: originalPermissionId,
           originalPermissionCode: originalPermissionCode,
+          parentPermissionCode: parentPermissionCode,
         });
         const updated = Array.from(map.values());
 
-        // 调试: 打印更新后的替换节点列表
+        // Debug
         console.log(
-          "更新后的替换节点列表:",
+          "更新后的replacedNodes:",
           updated.map((item) => ({
             key: item.node.key,
             originalPermissionId: item.originalPermissionId,
             originalPermissionCode: item.originalPermissionCode,
-            newPermissionId: item.node["权限id"],
+            parentPermissionCode: item.parentPermissionCode,
           }))
         );
 
@@ -375,6 +416,7 @@ function TreeDisplay({ treeData, onChange }) {
       for (let i = 0; i < nodes.length; i++) {
         const item = nodes[i];
         if (item.node.key === key) {
+          // 找到目标，移除并返回
           const [removed] = nodes.splice(i, 1);
           return {
             found: removed,
@@ -392,6 +434,7 @@ function TreeDisplay({ treeData, onChange }) {
             key
           );
           if (result && result.found) {
+            // 从原 children 中移除
             item.node.children = item.node.children.filter(
               (child) => child.key !== key
             );
@@ -401,22 +444,16 @@ function TreeDisplay({ treeData, onChange }) {
       }
       return null;
     };
-
+    // 拷贝 replacedNodes 以便递归操作
     const replacedCopy = JSON.parse(JSON.stringify(replacedNodes));
     const result = findAndRemove(replacedCopy, key);
     if (!result || !result.found) return;
-
     const { node } = result.found;
     let parentKey = result.parentOriginKey;
 
-    // 恢复原始权限id
-    if (result.originalPermissionId) {
-      node["权限id"] = result.originalPermissionId;
-    }
-
-    // 清除操作标记和原始权限id
+    // 清除操作标记和父级权限码
     delete node["操作"];
-    delete node["原始权限id"];
+    delete node["父级权限码"];
 
     const findNode = (nodes, k) => {
       for (const n of nodes) {
@@ -428,7 +465,6 @@ function TreeDisplay({ treeData, onChange }) {
       }
       return null;
     };
-
     let dataCopy = [...data];
     if (!findNode(dataCopy, parentKey)) {
       const root2 = findNode(dataCopy, 2) || findNode(dataCopy, "2");
@@ -825,12 +861,16 @@ function TreeDisplay({ treeData, onChange }) {
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
+          justifyContent: "left",
         }}
       >
         <h2 style={{ margin: 0 }}>树形结构</h2>
         <div className="tree-actions">
-          <Button size="small" onClick={collapseSecondLevel}>
+          <Button
+            style={{ marginLeft: 20 }}
+            size="small"
+            onClick={collapseSecondLevel}
+          >
             收起二级节点
           </Button>
           <Button
