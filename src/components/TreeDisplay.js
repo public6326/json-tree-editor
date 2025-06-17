@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Tree, Input, Button } from "antd";
+import { Tree, Input, Button, Modal, Form } from "antd";
 
 function TreeDisplay({ treeData, onChange }) {
   const [data, setData] = useState([]);
@@ -12,6 +12,11 @@ function TreeDisplay({ treeData, onChange }) {
   // 记录被删除节点的原父key，便于恢复
   const [deletedNodes, setDeletedNodes] = useState([]); // [{node, originParentKey}]
   const [replacedNodes, setReplacedNodes] = useState([]); // [{node, originParentKey}]
+
+  // 新增节点相关状态
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [addParentNode, setAddParentNode] = useState(null);
+  const [addForm] = Form.useForm();
 
   useEffect(() => {
     if (treeData) {
@@ -587,8 +592,18 @@ function TreeDisplay({ treeData, onChange }) {
                 <>
                   <Button
                     size="small"
-                    danger
                     style={{ marginLeft: 12, height: 18, width: 40 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAdd(node);
+                    }}
+                  >
+                    新增
+                  </Button>
+                  <Button
+                    size="small"
+                    danger
+                    style={{ marginLeft: 8, height: 18, width: 40 }}
                     onClick={(e) => {
                       e.stopPropagation();
                       handleDelete(node.key, parentKey);
@@ -864,6 +879,56 @@ function TreeDisplay({ treeData, onChange }) {
     console.log("Excel exported successfully");
   };
 
+  // 处理新增节点
+  const handleAdd = (parentNode) => {
+    setAddParentNode(parentNode);
+    setAddModalVisible(true);
+    addForm.resetFields();
+  };
+
+  // 确认添加新节点
+  const handleAddConfirm = () => {
+    addForm.validateFields().then((values) => {
+      const newNode = {
+        key: values.key,
+        title: values.title,
+        权限id: values.key,
+        权限名称: values.title,
+        权限码: values.permissionCode,
+        权限类型: values.permissionType,
+        父级权限id: addParentNode["权限id"] || addParentNode.key,
+        操作: "新增",
+      };
+
+      // 在树中找到父节点并添加子节点
+      const addChildToParent = (nodes, parentKey) => {
+        return nodes.map((node) => {
+          if (node.key === parentKey) {
+            // 为父节点添加children数组（如果不存在）
+            const children = node.children
+              ? [...node.children, newNode]
+              : [newNode];
+            return { ...node, children };
+          }
+
+          if (node.children) {
+            return {
+              ...node,
+              children: addChildToParent(node.children, parentKey),
+            };
+          }
+
+          return node;
+        });
+      };
+
+      const newData = addChildToParent(data, addParentNode.key);
+      setData(newData);
+      onChange(newData, deletedNodes, replacedNodes);
+      setAddModalVisible(false);
+    });
+  };
+
   return (
     <div
       className="tree-display"
@@ -926,6 +991,51 @@ function TreeDisplay({ treeData, onChange }) {
           />
         )}
       </div>
+
+      {/* 新增节点弹窗 */}
+      <Modal
+        title="新增节点"
+        open={addModalVisible}
+        onOk={handleAddConfirm}
+        onCancel={() => setAddModalVisible(false)}
+      >
+        <Form form={addForm} layout="vertical">
+          <Form.Item
+            name="key"
+            label="权限ID"
+            rules={[{ required: true, message: "请输入权限ID" }]}
+          >
+            <Input placeholder="请输入权限ID" />
+          </Form.Item>
+          <Form.Item
+            name="title"
+            label="权限名称"
+            rules={[{ required: true, message: "请输入权限名称" }]}
+          >
+            <Input placeholder="请输入权限名称" />
+          </Form.Item>
+          <Form.Item
+            name="permissionCode"
+            label="权限码"
+            rules={[{ required: true, message: "请输入权限码" }]}
+          >
+            <Input placeholder="请输入权限码" />
+          </Form.Item>
+          <Form.Item
+            name="permissionType"
+            label="权限类型"
+            rules={[{ required: true, message: "请输入权限类型" }]}
+          >
+            <Input placeholder="请输入权限类型" />
+          </Form.Item>
+          {addParentNode && (
+            <div style={{ marginBottom: 16 }}>
+              <p>父级节点: {addParentNode.title}</p>
+              <p>父级权限ID: {addParentNode["权限id"] || addParentNode.key}</p>
+            </div>
+          )}
+        </Form>
+      </Modal>
     </div>
   );
 }
