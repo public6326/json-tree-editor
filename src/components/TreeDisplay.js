@@ -18,6 +18,16 @@ function TreeDisplay({ treeData, onChange }) {
   const [addParentNode, setAddParentNode] = useState(null);
   const [addForm] = Form.useForm();
 
+  // 每次组件更新时都将最新的数据记录到ref中，确保导出时能获取到最新的状态
+  const latestDataRef = useRef(null);
+
+  useEffect(() => {
+    if (data && data.length > 0) {
+      latestDataRef.current = [...data];
+      console.log("数据已更新到ref:", latestDataRef.current);
+    }
+  }, [data]);
+
   useEffect(() => {
     if (treeData) {
       const initialData = Array.isArray(treeData) ? treeData : [treeData];
@@ -664,21 +674,51 @@ function TreeDisplay({ treeData, onChange }) {
 
   // 获取完整树数据，包括操作标记
   const getFullTreeData = () => {
+    // 新增log，帮助调试
+    console.log("getFullTreeData 被调用");
+    console.log("当前数据状态:", data);
+
+    // 统一处理key类型为字符串
+    const normalizeKey = (key) => (key !== undefined ? String(key) : "");
+
     const processNode = (node) => {
       const processedNode = { ...node };
-      if (node.children) {
+      // 处理可能的children
+      if (node.children && Array.isArray(node.children)) {
         processedNode.children = node.children.map(processNode);
       }
       return processedNode;
     };
 
+    // 首先复制当前数据
     const base = Array.isArray(data)
       ? data.map(processNode)
-      : [processNode(data)];
-    if (!deletedNodes.length && !replacedNodes.length) return base;
+      : data
+      ? [processNode(data)]
+      : [];
 
-    console.log("Building full tree data:", {
+    // 检查base中是否有新增节点
+    const hasNewNodes = base.some((node) => {
+      const checkNodeHasNewFlag = (n) => {
+        if (n.操作 === "新增") return true;
+        if (n.children && Array.isArray(n.children)) {
+          return n.children.some(checkNodeHasNewFlag);
+        }
+        return false;
+      };
+      return checkNodeHasNewFlag(node);
+    });
+
+    console.log("基础数据中包含新增节点:", hasNewNodes);
+
+    if (!deletedNodes.length && !replacedNodes.length) {
+      console.log("没有删除或替换节点，返回基础数据");
+      return base;
+    }
+
+    console.log("构建完整树数据:", {
       base,
+      baseLength: base.length,
       deletedNodes,
       replacedNodes,
     });
@@ -790,7 +830,7 @@ function TreeDisplay({ treeData, onChange }) {
       },
     ];
 
-    console.log("Final tree data:", result);
+    console.log("最终树数据:", result);
     return result;
   };
 
@@ -836,20 +876,219 @@ function TreeDisplay({ treeData, onChange }) {
     // 使用XLSX库
     const XLSX = require("xlsx");
 
-    // 获取完整树数据并拍平
-    const treeData = getFullTreeData();
-    const flatRows = flattenTree(treeData);
+    // 确保使用最新的数据
+    const currentData = latestDataRef.current || data;
 
-    console.log("Exporting data:", flatRows);
+    console.log("准备导出，当前数据状态:", {
+      dataLength: currentData?.length || 0,
+      nodesWithChildren:
+        currentData?.filter((n) => n.children && n.children.length).length || 0,
+      deletedNodesLength: deletedNodes.length,
+      replacedNodesLength: replacedNodes.length,
+    });
 
-    // 导出数据
-    const exportData = flatRows.map((row) => ({
+    // 使用组件内部的数据状态，包含所有节点（常规节点、删除节点、替换节点）
+    const exportRows = [];
+    // 使用Set记录已处理的节点ID，防止重复
+    const processedNodeIds = new Set();
+
+    // 首先收集所有常规节点（包括新增的）
+    const collectNodesForExport = (nodes, path = "") => {
+      console.log(
+        `收集节点，当前路径: ${path}, 节点数量: ${nodes?.length || 0}`
+      );
+
+      if (!nodes || nodes.length === 0) return;
+
+      // 深度优先搜索，确保收集所有嵌套层级的节点
+      const deepCollect = (node, nodePath) => {
+        if (!node) return;
+
+        // 获取节点唯一标识
+        const nodeId = String(node.权限id || node.key || "");
+
+        // 如果节点已被处理过，则跳过以避免重复
+        if (nodeId && processedNodeIds.has(nodeId)) {
+          console.log(`节点 ${nodeId} 已处理过，跳过`);
+          return;
+        }
+
+        // 记录已处理过的节点
+        if (nodeId) {
+          processedNodeIds.add(nodeId);
+        }
+
+        const currentPath = nodePath ? `${nodePath}->${node.key}` : node.key;
+        console.log(`深度处理节点: ${currentPath}, 操作: ${node.操作 || "无"}`);
+
+        // 处理当前节点
+        const nodeCopy = { ...node };
+
+        // 处理title（如果是React元素）
+        if (typeof nodeCopy.title === "object") {
+          nodeCopy.title = String(nodeCopy.title.props?.children || "")
+            .replace(/新增|删除|替换|恢复/g, "")
+            .trim();
+        }
+
+        // 分离children，保留纯数据
+        const { children, ...nodeData } = nodeCopy;
+
+        // 处理移动节点
+        if (
+          nodeData["操作"] === "移动" ||
+          (nodeData["操作"] && nodeData["操作"].includes("移动"))
+        ) {
+          nodeData["父级权限id（新）"] = nodeData["父级权限id"];
+          if (nodeData["原父级权限id"] !== undefined) {
+            nodeData["父级权限id"] = nodeData["原父级权限id"];
+          }
+        }
+
+        console.log(
+          `添加节点到导出行: ${nodeData.key || nodeData.title}, 操作: ${
+            nodeData.操作 || "无"
+          }`
+        );
+        exportRows.push(nodeData);
+
+        // 递归处理子节点
+        if (children && Array.isArray(children)) {
+          children.forEach((child) => deepCollect(child, currentPath));
+        }
+      };
+
+      // 对每个顶层节点进行深度优先遍历
+      nodes.forEach((node) => {
+        if (node.key === "deleted-root" || node.key === "replaced-root") {
+          console.log(`跳过特殊根节点: ${node.key}`);
+          return;
+        }
+
+        deepCollect(node, path);
+      });
+    };
+
+    // 收集当前数据中的所有节点
+    console.log("开始收集常规节点...");
+    collectNodesForExport(currentData);
+
+    // 另外收集已删除节点
+    console.log("开始收集已删除节点...");
+    deletedNodes.forEach((item, index) => {
+      console.log(`处理已删除节点 ${index}: ${item.node?.key || "未知"}`);
+
+      if (!item.node) return;
+
+      // 获取唯一标识
+      const nodeId = String(item.node.权限id || item.node.key || "");
+
+      // 如果节点已被处理过，则跳过以避免重复
+      if (nodeId && processedNodeIds.has(nodeId)) {
+        console.log(`已删除节点 ${nodeId} 已处理过，跳过`);
+        return;
+      }
+
+      // 记录已处理过的节点
+      if (nodeId) {
+        processedNodeIds.add(nodeId);
+      }
+
+      // 确保节点被标记为"删除"
+      const nodeData = { ...item.node, 操作: "删除" };
+
+      // 处理可能的React元素
+      if (typeof nodeData.title === "object") {
+        nodeData.title = String(nodeData.title.props?.children || "")
+          .replace(/新增|删除|替换|恢复/g, "")
+          .trim();
+      }
+
+      // 处理可能的子节点
+      if (nodeData.children) {
+        delete nodeData.children;
+      }
+
+      console.log(`添加已删除节点到导出行: ${nodeData.key || nodeData.title}`);
+      exportRows.push(nodeData);
+    });
+
+    // 收集已替换节点
+    console.log("开始收集已替换节点...");
+    replacedNodes.forEach((item, index) => {
+      console.log(`处理已替换节点 ${index}: ${item.node?.key || "未知"}`);
+
+      if (!item.node) return;
+
+      // 获取唯一标识
+      const nodeId = String(item.node.权限id || item.node.key || "");
+
+      // 如果节点已被处理过，则跳过以避免重复
+      if (nodeId && processedNodeIds.has(nodeId)) {
+        console.log(`已替换节点 ${nodeId} 已处理过，跳过`);
+        return;
+      }
+
+      // 记录已处理过的节点
+      if (nodeId) {
+        processedNodeIds.add(nodeId);
+      }
+
+      // 确保节点被标记为"替换"
+      const nodeData = { ...item.node, 操作: "替换" };
+
+      // 处理可能的React元素
+      if (typeof nodeData.title === "object") {
+        nodeData.title = String(nodeData.title.props?.children || "")
+          .replace(/新增|删除|替换|恢复/g, "")
+          .trim();
+      }
+
+      // 处理父级权限码（用于标记新的权限码）
+      if (nodeData["父级权限码"]) {
+        nodeData["权限码（新）"] =
+          nodeData["父级权限码"] + nodeData["权限码"].slice(-3);
+      }
+
+      // 处理可能的子节点
+      if (nodeData.children) {
+        delete nodeData.children;
+      }
+
+      console.log(`添加已替换节点到导出行: ${nodeData.key || nodeData.title}`);
+      exportRows.push(nodeData);
+    });
+
+    console.log("导出的行数据总数:", exportRows.length);
+    console.log(
+      "是否包含新增节点:",
+      exportRows.some((row) => row["操作"] === "新增"),
+      "数量:",
+      exportRows.filter((row) => row["操作"] === "新增").length
+    );
+    console.log(
+      "是否包含删除节点:",
+      exportRows.some((row) => row["操作"] === "删除"),
+      "数量:",
+      exportRows.filter((row) => row["操作"] === "删除").length
+    );
+    console.log(
+      "是否包含替换节点:",
+      exportRows.some((row) => row["操作"] === "替换"),
+      "数量:",
+      exportRows.filter((row) => row["操作"] === "替换").length
+    );
+
+    // 格式化导出数据
+    const exportData = exportRows.map((row) => ({
       权限码: row["权限码"] || "",
+      "权限码（新）": row["权限码（新）"] || "",
       权限名称: row["权限名称"] || row.title || "",
       权限类型: row["权限类型"] || "",
       权限id: row["权限id"] || row.key || "",
       父级权限名称: row["父级权限名称"] || "",
       父级权限id: row["父级权限id"] || "",
+      "父级权限id（新）": row["父级权限id（新）"] || "",
       权限路径: row["权限路径"] || "",
       是否有子节点:
         row["是否有子节点"] ||
@@ -860,11 +1099,13 @@ function TreeDisplay({ treeData, onChange }) {
 
     const exportColumns = [
       "权限码",
+      "权限码（新）",
       "权限名称",
       "权限类型",
       "权限id",
       "父级权限名称",
       "父级权限id",
+      "父级权限id（新）",
       "权限路径",
       "是否有子节点",
       "站点",
@@ -876,11 +1117,12 @@ function TreeDisplay({ treeData, onChange }) {
     XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
     XLSX.writeFile(wb, "tree-data.xlsx");
 
-    console.log("Excel exported successfully");
+    console.log("Excel导出成功，数据行数:", exportData.length);
   };
 
   // 处理新增节点
   const handleAdd = (parentNode) => {
+    console.log("点击新增按钮，父节点:", parentNode);
     setAddParentNode(parentNode);
     setAddModalVisible(true);
     addForm.resetFields();
@@ -889,10 +1131,13 @@ function TreeDisplay({ treeData, onChange }) {
   // 确认添加新节点
   const handleAddConfirm = () => {
     addForm.validateFields().then((values) => {
+      // 给节点一个唯一标识
+      const newKey = values.key || `new-${Date.now()}`;
+
       const newNode = {
-        key: values.key,
+        key: newKey,
         title: values.title,
-        权限id: values.key,
+        权限id: newKey,
         权限名称: values.title,
         权限码: values.permissionCode,
         权限类型: values.permissionType,
@@ -900,34 +1145,148 @@ function TreeDisplay({ treeData, onChange }) {
         操作: "新增",
       };
 
-      // 在树中找到父节点并添加子节点
-      const addChildToParent = (nodes, parentKey) => {
+      console.log("===== 开始新增节点 =====");
+      console.log("新节点:", newNode);
+      console.log("父节点:", addParentNode);
+
+      // 打印父节点关键信息，便于调试
+      if (addParentNode) {
+        console.log("父节点key:", addParentNode.key);
+        console.log("父节点权限id:", addParentNode["权限id"]);
+      }
+
+      console.log("当前树数据:", data);
+
+      // 关键点：确保key的类型一致性，有些可能是数字有些可能是字符串
+      const normalizeKey = (key) => (key !== undefined ? String(key) : "");
+      const parentNodeKey = normalizeKey(addParentNode.key);
+
+      // 更安全的查找父节点并添加子节点的方法
+      const addChildToParent = (nodes, targetParentKey) => {
+        if (!nodes) return [];
+
+        // 转为字符串便于比较
+        targetParentKey = normalizeKey(targetParentKey);
+
         return nodes.map((node) => {
-          if (node.key === parentKey) {
+          // 确保node.key存在并转为字符串比较
+          const currentKey =
+            node.key !== undefined ? normalizeKey(node.key) : "";
+
+          // 比较两种可能的key: 节点的key和权限id
+          const nodePermissionId = normalizeKey(node["权限id"]);
+
+          // 找到父节点 - 同时检查key和权限id
+          if (
+            currentKey === targetParentKey ||
+            nodePermissionId === targetParentKey
+          ) {
+            console.log("找到父节点:", node);
+
             // 为父节点添加children数组（如果不存在）
-            const children = node.children
+            const updatedChildren = node.children
               ? [...node.children, newNode]
               : [newNode];
-            return { ...node, children };
+
+            // 确保展开父节点以显示新节点
+            if (!expandedKeys.includes(currentKey)) {
+              console.log(`展开父节点 ${currentKey}`);
+              setExpandedKeys((prevKeys) => [...prevKeys, currentKey]);
+            }
+
+            console.log("更新后的父节点children:", updatedChildren);
+            return { ...node, children: updatedChildren };
           }
 
-          if (node.children) {
-            return {
-              ...node,
-              children: addChildToParent(node.children, parentKey),
-            };
+          // 递归查找子节点
+          if (node.children && node.children.length > 0) {
+            const newChildren = addChildToParent(
+              node.children,
+              targetParentKey
+            );
+            // 仅当子节点有变化时才创建新对象
+            if (newChildren !== node.children) {
+              console.log(`节点 ${node.key} 的子节点已更新`);
+              return { ...node, children: newChildren };
+            }
           }
 
           return node;
         });
       };
 
-      const newData = addChildToParent(data, addParentNode.key);
-      setData(newData);
-      onChange(newData, deletedNodes, replacedNodes);
+      // 添加子节点
+      const newData = addChildToParent(data, parentNodeKey);
+
+      console.log("修改后的数据结构:", newData);
+      console.log(`预期在节点 ${parentNodeKey} 下添加新节点 ${newKey}`);
+
+      // 验证新节点是否成功添加到树中
+      const verifyNodeAdded = (treeData, parentKey, childKey) => {
+        parentKey = normalizeKey(parentKey);
+        childKey = normalizeKey(childKey);
+
+        const findNode = (nodes) => {
+          if (!nodes) return false;
+
+          for (const node of nodes) {
+            if (
+              normalizeKey(node.key) === parentKey ||
+              normalizeKey(node["权限id"]) === parentKey
+            ) {
+              if (
+                node.children &&
+                node.children.some(
+                  (child) =>
+                    normalizeKey(child.key) === childKey ||
+                    normalizeKey(child["权限id"]) === childKey
+                )
+              ) {
+                return true;
+              }
+              return false;
+            }
+            if (node.children && findNode(node.children)) {
+              return true;
+            }
+          }
+          return false;
+        };
+
+        return findNode(treeData);
+      };
+
+      const nodeAdded = verifyNodeAdded(newData, parentNodeKey, newKey);
+      console.log(`验证新节点是否添加: ${nodeAdded ? "成功" : "失败"}`);
+
+      // 强制更新状态以确保重渲染
+      setData([...newData]);
+      onChange([...newData], deletedNodes, replacedNodes);
+
+      // 延时检查状态更新
+      setTimeout(() => {
+        console.log("状态更新后检查:", latestDataRef.current);
+      }, 100);
+
       setAddModalVisible(false);
+      console.log("===== 新增节点结束 =====");
     });
   };
+
+  // 重载Tree组件的更新触发
+  useEffect(() => {
+    // 强制刷新树显示
+    const triggerTreeRefresh = () => {
+      setData((prevData) => [...prevData]);
+    };
+
+    // 在新增节点后，可能需要额外的刷新来确保UI更新
+    if (data && data.length > 0) {
+      // 延迟执行以确保React状态已更新
+      const timer = setTimeout(triggerTreeRefresh, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [data.length]);
 
   return (
     <div

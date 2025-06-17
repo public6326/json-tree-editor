@@ -82,6 +82,51 @@ function App() {
     console.log("handleTreeChange 开始处理");
     console.log("收到的 replacedNodes:", replacedNodes);
     console.log("收到的 deletedNodes:", deletedNodes);
+    console.log("收到的 newData:", newData);
+
+    // 0. 检查是否有新增节点（使用Set去重）
+    const addedNodesSet = new Set(); // 使用Set存储节点的唯一标识符
+    const addedNodes = [];
+
+    const checkForAddedNodes = (nodes) => {
+      if (!nodes || !Array.isArray(nodes)) return;
+      nodes.forEach((node) => {
+        // 使用节点的key或权限id作为唯一标识
+        const nodeId = String(node.权限id || node.key || "");
+
+        // 只有当节点是新增且未被添加过时才加入
+        if (node.操作 === "新增" && !addedNodesSet.has(nodeId) && nodeId) {
+          console.log("发现新增节点:", node);
+          addedNodesSet.add(nodeId);
+          addedNodes.push(node);
+        }
+
+        // 递归检查子节点
+        if (node.children && Array.isArray(node.children)) {
+          checkForAddedNodes(node.children);
+        }
+      });
+    };
+
+    checkForAddedNodes(newData);
+    console.log(
+      "找到新增节点数量:",
+      addedNodes.length,
+      "唯一标识符数量:",
+      addedNodesSet.size
+    );
+
+    // 详细输出收集到的新增节点，便于调试
+    if (addedNodes.length > 0) {
+      console.log("新增节点列表:");
+      addedNodes.forEach((node, index) => {
+        console.log(
+          `[${index}] ID: ${node.权限id || node.key}, 名称: ${
+            node.权限名称 || node.title
+          }`
+        );
+      });
+    }
 
     // 1. 处理删除节点
     const deletedKeySet = new Set();
@@ -258,6 +303,55 @@ function App() {
         return result;
       });
 
+      // 5. 处理新增节点 - 添加到flatData中
+      if (addedNodes.length > 0) {
+        console.log("开始处理新增节点，添加到flatData");
+
+        // 检查现有的flatData，避免重复添加相同ID的节点
+        const existingIds = new Set(
+          newFlat.map((row) => String(row["权限id"] || ""))
+        );
+        console.log("现有flatData中的ID数量:", existingIds.size);
+
+        let addedCount = 0;
+
+        addedNodes.forEach((node) => {
+          // 获取节点ID并确保是字符串
+          const nodeId = String(node.权限id || node.key || "");
+
+          // 跳过已存在的ID
+          if (existingIds.has(nodeId)) {
+            console.log(`节点ID ${nodeId} 已存在于flatData中，跳过添加`);
+            return; // 跳过当前节点
+          }
+
+          const newRow = {};
+
+          // 复制列结构
+          columns.forEach((col) => {
+            newRow[col] = "";
+          });
+
+          // 设置关键字段
+          newRow["权限id"] = nodeId;
+          newRow["权限名称"] = node.权限名称 || node.title || "";
+          newRow["权限码"] = node.权限码 || "";
+          newRow["权限类型"] = node.权限类型 || "";
+          newRow["父级权限id"] = node.父级权限id || "";
+
+          // 设置操作标记
+          newRow._action = "新增";
+
+          // 添加到flatData
+          console.log(`添加新节点 ${nodeId} 到flatData`);
+          newFlat.push(newRow);
+          existingIds.add(nodeId); // 添加到已存在集合中，防止后续重复添加
+          addedCount++;
+        });
+
+        console.log(`成功添加 ${addedCount} 条新增节点记录`);
+      }
+
       // 输出统计信息
       const replacedCount = newFlat.filter(
         (row) => row._action === "替换"
@@ -265,8 +359,10 @@ function App() {
       const deletedCount = newFlat.filter(
         (row) => row._action === "删除"
       ).length;
+      const addedCount = newFlat.filter((row) => row._action === "新增").length;
+
       console.log(
-        `处理完成: ${replacedCount}行标记为替换, ${deletedCount}行标记为删除`
+        `处理完成: ${replacedCount}行标记为替换, ${deletedCount}行标记为删除, ${addedCount}行标记为新增`
       );
 
       setFlatData(newFlat);
