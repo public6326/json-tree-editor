@@ -620,7 +620,7 @@ function TreeDisplay({ treeData, onChange }) {
               node.key !== "deleted-root" &&
               node.key !== "replaced-root" && (
                 <>
-                  <Button
+                  {/* <Button
                     size="small"
                     style={{ marginLeft: 12, height: 18, width: 40 }}
                     onClick={(e) => {
@@ -629,7 +629,7 @@ function TreeDisplay({ treeData, onChange }) {
                     }}
                   >
                     新增
-                  </Button>
+                  </Button> */}
                   <Button
                     size="small"
                     danger
