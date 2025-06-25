@@ -286,14 +286,14 @@ function App() {
             console.log(`发现节点操作: ${key}, 操作: ${node["操作"]}`);
             result._action = node["操作"];
 
-            // 如果是修改操作，记录原始标题
-            if (node["操作"] === "修改" && node["原始标题"]) {
+            // 如果包含修改操作，记录原始标题
+            if (node["操作"].includes("修改") && node["原始标题"]) {
               result._newName = node.title;
               console.log(`节点 ${key} 标题被修改为: ${node.title}`);
             }
 
-            // 如果是移动操作，记录新父级ID
-            if (node["操作"] === "移动" && node["父级权限id"]) {
+            // 如果包含移动操作，记录新父级ID
+            if (node["操作"].includes("移动") && node["父级权限id"]) {
               result._newParentId = node["父级权限id"];
               console.log(`节点 ${key} 被移动到新父级: ${node["父级权限id"]}`);
             }
