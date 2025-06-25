@@ -241,7 +241,9 @@ function TreeDisplay({ treeData, onChange }) {
       onChange(newData, updatedDeletedNodes, [...replacedNodes]);
 
       // 标记节点为删除操作
-      if (removedNode["操作"] === undefined) {
+      const existingOperation = removedNode["操作"] || "";
+      // 对于删除操作，我们总是将其作为唯一操作，因为删除是终态操作
+      if (!existingOperation.includes("删除")) {
         removedNode["操作"] = "删除";
       }
     }
@@ -300,7 +302,16 @@ function TreeDisplay({ treeData, onChange }) {
       const originalPermissionCode = removedNode["权限码"];
 
       // 标记为替换，但不修改原始权限id
-      removedNode["操作"] = "替换";
+      // 获取现有操作标记
+      const existingOperation = removedNode["操作"] || "";
+      // 添加替换操作（如果不存在）
+      const newOperation = !existingOperation.includes("替换")
+        ? existingOperation
+          ? `${existingOperation},替换`
+          : "替换"
+        : existingOperation;
+
+      removedNode["操作"] = newOperation;
       // 记录父级权限码，用于导出时添加到"权限码（新）"列
       if (parentPermissionCode) {
         removedNode["父级权限码"] = parentPermissionCode;
@@ -537,10 +548,19 @@ function TreeDisplay({ treeData, onChange }) {
             console.log(
               `节点 ${key} 标题被修改，原标题: ${originalTitle}, 新标题: ${value}`
             );
+            // 获取现有操作标记
+            const existingOperation = node["操作"] || "";
+            // 添加修改操作（如果不存在）
+            const newOperation = !existingOperation.includes("修改")
+              ? existingOperation
+                ? `${existingOperation},修改`
+                : "修改"
+              : existingOperation;
+
             return {
               ...node,
               title: value,
-              操作: "修改",
+              操作: newOperation,
               原始标题: originalTitle,
             };
           }
@@ -1142,7 +1162,7 @@ function TreeDisplay({ treeData, onChange }) {
         权限码: values.permissionCode,
         权限类型: values.permissionType,
         父级权限id: addParentNode["权限id"] || addParentNode.key,
-        操作: "新增",
+        操作: "新增", // 新增节点不需要保留现有操作标记，因为它是新创建的
       };
 
       console.log("===== 开始新增节点 =====");
