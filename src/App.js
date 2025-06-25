@@ -1,38 +1,228 @@
 import React, { useState, useRef } from "react";
-import { Layout, Row, Col, message, Button } from "antd";
+import { Layout, Row, Col, message, Button, Typography } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import JsonUpload from "./components/JsonInput";
 import TreeDisplay from "./components/TreeDisplay";
 import * as XLSX from "xlsx";
+import { Routes, Route, Link, BrowserRouter } from "react-router-dom";
+import ManualTest from "./testutils/ManualTest";
 import "./App.css";
 
-const { Content } = Layout;
+const { Content, Header, Footer } = Layout;
+const { Title } = Typography;
 
-function App() {
+function MainApp() {
   const [treeData, setTreeData] = useState(null);
   const [jsonString, setJsonString] = useState("");
   const [flatData, setFlatData] = useState([]);
   const [columns, setColumns] = useState([]);
   const [deletedKeys, setDeletedKeys] = useState([]);
   const replacedNodesRef = useRef([]);
+  const [originalExcelData, setOriginalExcelData] = useState([]);
+  const [isExportedExcel, setIsExportedExcel] = useState(false);
+  // 新增状态，用于存储导入时检测到的已删除和已替换节点
+  const [importedDeletedNodes, setImportedDeletedNodes] = useState([]);
+  const [importedReplacedNodes, setImportedReplacedNodes] = useState([]);
 
   const handleJsonSubmit = (jsonData) => {
+    // 检查是否包含特殊根节点（已删除或已替换）
+    if (Array.isArray(jsonData)) {
+      console.log("接收到的树数据结构:", {
+        节点数量: jsonData.length,
+        节点类型: jsonData.map((node) => ({
+          key: node.key,
+          title: node.title,
+        })),
+      });
+
+      // 详细检查是否包含特殊根节点
+      console.log("检查是否包含特殊根节点:");
+      jsonData.forEach((node) => {
+        console.log(
+          `节点key: ${node.key}, title: ${node.title}, 是否为特殊根节点: ${
+            node.key === "deleted-root" || node.key === "replaced-root"
+          }`
+        );
+      });
+
+      const deletedRoot = jsonData.find((node) => node.key === "deleted-root");
+      const replacedRoot = jsonData.find(
+        (node) => node.key === "replaced-root"
+      );
+
+      // 如果存在已删除根节点，提取其中的节点
+      if (deletedRoot) {
+        console.log(
+          "检测到已删除根节点，包含",
+          deletedRoot.children?.length || 0,
+          "个节点"
+        );
+        if (deletedRoot.children && deletedRoot.children.length > 0) {
+          console.log(
+            "已删除节点示例:",
+            deletedRoot.children.slice(0, 2).map((node) => ({
+              key: node.key,
+              title: node.title,
+              操作: node.操作,
+            }))
+          );
+
+          const extractedDeletedNodes = deletedRoot.children.map((node) => ({
+            node,
+            originParentKey: null,
+          }));
+          setImportedDeletedNodes(extractedDeletedNodes);
+        } else {
+          console.log("已删除根节点存在，但没有子节点");
+          setImportedDeletedNodes([]);
+        }
+      } else {
+        console.log("未检测到已删除根节点");
+        setImportedDeletedNodes([]);
+      }
+
+      // 如果存在已替换根节点，提取其中的节点
+      if (replacedRoot) {
+        console.log(
+          "检测到已替换根节点，包含",
+          replacedRoot.children?.length || 0,
+          "个节点"
+        );
+        if (replacedRoot.children && replacedRoot.children.length > 0) {
+          console.log(
+            "已替换节点示例:",
+            replacedRoot.children.slice(0, 2).map((node) => ({
+              key: node.key,
+              title: node.title,
+              操作: node.操作,
+            }))
+          );
+
+          const extractedReplacedNodes = replacedRoot.children.map((node) => ({
+            node,
+            originParentKey: null,
+            originalPermissionId: node["权限id"],
+            originalPermissionCode: node["权限码"],
+            parentPermissionCode: node["父级权限码"] || null,
+          }));
+          setImportedReplacedNodes(extractedReplacedNodes);
+        } else {
+          console.log("已替换根节点存在，但没有子节点");
+          setImportedReplacedNodes([]);
+        }
+      } else {
+        console.log("未检测到已替换根节点");
+        setImportedReplacedNodes([]);
+      }
+    }
+
+    // 不过滤特殊根节点，保留完整结构
     setTreeData(jsonData);
     setJsonString(JSON.stringify(jsonData, null, 2));
   };
 
-  const handleExcelParsed = (data, cols) => {
-    if (!flatData.length) {
-      const patched = data.map((row) => ({
-        ...row,
-        _originParentId: row["父级权限id"],
-        _originName: row["权限名称"],
-      }));
-      setFlatData(patched);
+  const handleExcelParsed = (data, cols, isExported = false) => {
+    console.log("接收到Excel数据:", {
+      行数: data.length,
+      列数: cols.length,
+      是否已导出格式: isExported,
+      包含操作列: isExported && data.some((row) => row["操作"]),
+    });
+
+    if (isExported) {
+      // 统计操作列的数据
+      const operationStats = {
+        删除: 0,
+        替换: 0,
+        修改: 0,
+        移动: 0,
+        新增: 0,
+        其他: 0,
+        空: 0,
+      };
+
+      data.forEach((row) => {
+        const op = row["操作"];
+        if (!op) {
+          operationStats.空++;
+          return;
+        }
+
+        if (op.includes("删除")) operationStats.删除++;
+        else if (op.includes("替换")) operationStats.替换++;
+        else if (op.includes("修改")) operationStats.修改++;
+        else if (op.includes("移动")) operationStats.移动++;
+        else if (op.includes("新增")) operationStats.新增++;
+        else operationStats.其他++;
+      });
+
+      console.log("Excel中的操作统计:", operationStats);
+
+      // 如果有删除操作，但没有检测到已删除根节点，记录一些额外信息
+      if (operationStats.删除 > 0) {
+        console.log("Excel中有删除操作，检查删除节点示例:");
+        const deleteExamples = data
+          .filter((row) => row["操作"] && row["操作"].includes("删除"))
+          .slice(0, 3)
+          .map((row) => ({
+            权限id: row["权限id"],
+            权限名称: row["权限名称"],
+            操作: row["操作"],
+          }));
+        console.log(deleteExamples);
+      }
     }
+
+    if (!flatData.length) {
+      // 如果是导出后的Excel，保留原始操作记录
+      const patched = data.map((row) => {
+        // 基础字段
+        const result = {
+          ...row,
+          _originParentId: row["父级权限id"],
+          _originName: row["权限名称"],
+        };
+
+        // 如果是导出后的Excel，保留操作标记和新值
+        if (isExported) {
+          // 保存操作标记
+          if (row["操作"]) {
+            result._action = row["操作"];
+          }
+
+          // 保存新名称（如存在）
+          if (row["权限名称（新）"]) {
+            result._newName = row["权限名称（新）"];
+          }
+
+          // 保存新父级ID（如存在）
+          if (row["父级权限id（新）"]) {
+            result._newParentId = row["父级权限id（新）"];
+          }
+
+          // 保存新权限码（如存在）
+          if (row["权限码（新）"]) {
+            result._newPermissionCode = row["权限码（新）"];
+          }
+        }
+
+        return result;
+      });
+
+      setFlatData(patched);
+      console.log("处理后的flatData:", {
+        行数: patched.length,
+        包含操作记录: isExported,
+        操作记录数: patched.filter((row) => row._action).length,
+      });
+    }
+
     if (!columns.length) {
       setColumns(cols);
     }
+
+    setOriginalExcelData(data);
+    setIsExportedExcel(isExported);
   };
 
   const downloadExcel = () => {
@@ -80,8 +270,27 @@ function App() {
     setJsonString(JSON.stringify(newData, null, 2));
 
     console.log("handleTreeChange 开始处理");
+
+    // 合并导入时检测到的已删除和已替换节点
+    const allDeletedNodes = [...deletedNodes];
+    const allReplacedNodes = [...replacedNodes];
+
+    // 如果有导入的已删除节点，添加到deletedNodes中
+    if (importedDeletedNodes.length > 0 && deletedNodes.length === 0) {
+      console.log("合并导入的已删除节点:", importedDeletedNodes.length);
+      allDeletedNodes.push(...importedDeletedNodes);
+    }
+
+    // 如果有导入的已替换节点，添加到replacedNodes中
+    if (importedReplacedNodes.length > 0 && replacedNodes.length === 0) {
+      console.log("合并导入的已替换节点:", importedReplacedNodes.length);
+      allReplacedNodes.push(...importedReplacedNodes);
+    }
+
     console.log("收到的 replacedNodes:", replacedNodes);
     console.log("收到的 deletedNodes:", deletedNodes);
+    console.log("合并后的 allDeletedNodes:", allDeletedNodes);
+    console.log("合并后的 allReplacedNodes:", allReplacedNodes);
     console.log("收到的 newData:", newData);
 
     // 0. 检查是否有新增节点（使用Set去重）
@@ -161,7 +370,7 @@ function App() {
     };
 
     // 处理所有删除节点
-    deletedNodes.forEach((item) => {
+    allDeletedNodes.forEach((item) => {
       if (item.node) {
         // 确保节点被标记为删除
         if (item.node["操作"] === undefined) {
@@ -178,28 +387,30 @@ function App() {
 
     // 2. 处理替换节点
     // 全局累积所有替换节点
-    const allReplacedNodes = [...replacedNodesRef.current];
+    const allAccumulatedReplacedNodes = [...replacedNodesRef.current];
 
     // 添加新的替换节点（去重）
-    if (replacedNodes && replacedNodes.length) {
+    if (allReplacedNodes && allReplacedNodes.length) {
       const existingKeys = new Set(
-        allReplacedNodes.map((item) => item.node?.key).filter(Boolean)
+        allAccumulatedReplacedNodes
+          .map((item) => item.node?.key)
+          .filter(Boolean)
       );
 
-      replacedNodes.forEach((item) => {
+      allReplacedNodes.forEach((item) => {
         if (item.node && item.node.key && !existingKeys.has(item.node.key)) {
-          allReplacedNodes.push(item);
+          allAccumulatedReplacedNodes.push(item);
           existingKeys.add(item.node.key);
         }
       });
 
       // 更新引用
-      replacedNodesRef.current = allReplacedNodes;
+      replacedNodesRef.current = allAccumulatedReplacedNodes;
     }
 
     console.log(
       "累积的替换节点:",
-      allReplacedNodes.map((item) => item.node?.key)
+      allAccumulatedReplacedNodes.map((item) => item.node?.key)
     );
 
     // 3. 构建替换信息映射
@@ -207,7 +418,7 @@ function App() {
     // 创建一个从key到父级权限码的映射
     const keyToParentPermissionCode = {};
 
-    allReplacedNodes.forEach((item) => {
+    allAccumulatedReplacedNodes.forEach((item) => {
       if (item.node && item.node.key) {
         const key = String(item.node.key);
         // 存储父级权限码信息
@@ -372,32 +583,73 @@ function App() {
   };
 
   return (
-    <Layout className="layout">
-      <Content style={{ padding: "8px 8px" }}>
-        <div className="site-layout-content">
-          <Row gutter={16} className="horizontal-layout">
-            <Col span={6}>
-              <JsonUpload
-                onChange={handleJsonSubmit}
-                onExcelParsed={handleExcelParsed}
-              />
-              <Button
-                type="primary"
-                icon={<DownloadOutlined />}
-                onClick={downloadExcel}
-                style={{ marginTop: 16, width: "100%" }}
-              >
-                下载 excel
-              </Button>
-            </Col>
-
-            <Col span={18}>
-              <TreeDisplay treeData={treeData} onChange={handleTreeChange} />
-            </Col>
-          </Row>
+    <Layout className="layout" style={{ minHeight: "100vh" }}>
+      {/* <Header
+        style={{
+          backgroundColor: "#ffffff",
+          borderBottom: "1px solid #f0f0f0",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <Title level={3} style={{ margin: "16px 0" }}>
+            JSON树形结构编辑器
+          </Title>
+          <div>
+            <Link to="/test">
+              <Button type="primary">测试工具</Button>
+            </Link>
+          </div>
         </div>
+      </Header> */}
+      <Content style={{ padding: "24px", backgroundColor: "#fff" }}>
+        <Row gutter={[24, 24]}>
+          <Col span={8}>
+            <JsonUpload
+              onChange={handleJsonSubmit}
+              onExcelParsed={handleExcelParsed}
+            />
+            <Button
+              type="primary"
+              icon={<DownloadOutlined />}
+              onClick={downloadExcel}
+              style={{ marginTop: 16, width: "100%" }}
+            >
+              下载 excel
+            </Button>
+          </Col>
+          <Col span={16}>
+            <TreeDisplay
+              treeData={treeData}
+              onChange={handleTreeChange}
+              onExport={() => originalExcelData}
+              isExportedExcel={isExportedExcel}
+              initialDeletedNodes={importedDeletedNodes}
+              initialReplacedNodes={importedReplacedNodes}
+            />
+          </Col>
+        </Row>
       </Content>
+      {/* <Footer style={{ textAlign: "center" }}>
+        JSON树形结构编辑器 ©{new Date().getFullYear()}
+      </Footer> */}
     </Layout>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<MainApp />} />
+        <Route path="/test" element={<ManualTest />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 

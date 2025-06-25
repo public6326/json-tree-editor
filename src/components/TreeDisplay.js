@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Tree, Input, Button, Modal, Form } from "antd";
 
-function TreeDisplay({ treeData, onChange }) {
+function TreeDisplay({
+  treeData,
+  onChange,
+  isExportedExcel,
+  initialDeletedNodes = [],
+  initialReplacedNodes = [],
+}) {
   const [data, setData] = useState([]);
   const [expandedKeys, setExpandedKeys] = useState([]);
   const [editingKey, setEditingKey] = useState(null);
@@ -21,17 +27,85 @@ function TreeDisplay({ treeData, onChange }) {
   // 每次组件更新时都将最新的数据记录到ref中，确保导出时能获取到最新的状态
   const latestDataRef = useRef(null);
 
+  // 初始化时，如果有initialDeletedNodes和initialReplacedNodes，则设置到状态中
+  useEffect(() => {
+    if (initialDeletedNodes && initialDeletedNodes.length > 0) {
+      console.log(
+        "TreeDisplay: 设置初始已删除节点",
+        initialDeletedNodes.length
+      );
+      console.log(
+        "初始已删除节点示例:",
+        initialDeletedNodes.slice(0, 2).map((item) => ({
+          key: item.node?.key,
+          title: item.node?.title,
+          操作: item.node?.操作,
+        }))
+      );
+      setDeletedNodes(initialDeletedNodes);
+    }
+
+    if (initialReplacedNodes && initialReplacedNodes.length > 0) {
+      console.log(
+        "TreeDisplay: 设置初始已替换节点",
+        initialReplacedNodes.length
+      );
+      console.log(
+        "初始已替换节点示例:",
+        initialReplacedNodes.slice(0, 2).map((item) => ({
+          key: item.node?.key,
+          title: item.node?.title,
+          操作: item.node?.操作,
+        }))
+      );
+      setReplacedNodes(initialReplacedNodes);
+    }
+  }, [initialDeletedNodes, initialReplacedNodes]);
+
   useEffect(() => {
     if (data && data.length > 0) {
       latestDataRef.current = [...data];
-      console.log("数据已更新到ref:", latestDataRef.current);
+      console.log("数据已更新到ref:", latestDataRef.current.length);
     }
   }, [data]);
 
   useEffect(() => {
     if (treeData) {
-      const initialData = Array.isArray(treeData) ? treeData : [treeData];
-      setData(initialData);
+      console.log("接收到treeData更新:", {
+        类型: Array.isArray(treeData) ? "数组" : "对象",
+        长度: Array.isArray(treeData) ? treeData.length : 1,
+        节点类型: Array.isArray(treeData)
+          ? treeData.map((node) => ({
+              key: node.key,
+              title: typeof node.title === "string" ? node.title : "组件",
+            }))
+          : [
+              {
+                key: treeData.key,
+                title:
+                  typeof treeData.title === "string" ? treeData.title : "组件",
+              },
+            ],
+      });
+
+      // 过滤掉特殊根节点（已删除和已替换），因为我们会在getFullTreeData中重新添加它们
+      let filteredData = Array.isArray(treeData)
+        ? treeData.filter(
+            (node) =>
+              node.key !== "deleted-root" && node.key !== "replaced-root"
+          )
+        : [treeData];
+
+      console.log("过滤后的数据:", {
+        长度: filteredData.length,
+        节点类型: filteredData.map((node) => ({
+          key: node.key,
+          title: typeof node.title === "string" ? node.title : "组件",
+        })),
+      });
+
+      setData(filteredData);
+
       // 只在首次加载时设置展开，后续不再自动展开
       if (expandedKeys.length === 0) {
         const keys = [];
@@ -43,11 +117,28 @@ function TreeDisplay({ treeData, onChange }) {
             }
           });
         };
-        collectKeys(initialData);
+        collectKeys(filteredData);
         setExpandedKeys(keys);
       }
     }
   }, [treeData]);
+
+  useEffect(() => {
+    console.log("当前删除节点:", deletedNodes.length);
+    console.log("当前替换节点:", replacedNodes.length);
+
+    // 检查treeData中是否包含特殊根节点
+    if (Array.isArray(treeData)) {
+      const hasDeletedRoot = treeData.some(
+        (node) => node.key === "deleted-root"
+      );
+      const hasReplacedRoot = treeData.some(
+        (node) => node.key === "replaced-root"
+      );
+      console.log("树中包含已删除根节点:", hasDeletedRoot);
+      console.log("树中包含已替换根节点:", hasReplacedRoot);
+    }
+  }, [treeData, deletedNodes, replacedNodes]);
 
   const onExpand = (expandedKeysValue) => {
     setExpandedKeys(expandedKeysValue);
@@ -696,7 +787,34 @@ function TreeDisplay({ treeData, onChange }) {
   const getFullTreeData = () => {
     // 新增log，帮助调试
     console.log("getFullTreeData 被调用");
-    console.log("当前数据状态:", data);
+    console.log("当前数据状态:", data.length);
+    console.log("当前删除节点:", deletedNodes.length);
+    console.log("当前替换节点:", replacedNodes.length);
+    console.log("是否为导出后的Excel:", isExportedExcel);
+
+    // 检查删除节点的结构
+    if (deletedNodes.length > 0) {
+      console.log(
+        "删除节点示例:",
+        deletedNodes.slice(0, 2).map((item) => ({
+          key: item.node?.key,
+          title: item.node?.title,
+          操作: item.node?.操作,
+        }))
+      );
+    }
+
+    // 检查替换节点的结构
+    if (replacedNodes.length > 0) {
+      console.log(
+        "替换节点示例:",
+        replacedNodes.slice(0, 2).map((item) => ({
+          key: item.node?.key,
+          title: item.node?.title,
+          操作: item.node?.操作,
+        }))
+      );
+    }
 
     // 统一处理key类型为字符串
     const normalizeKey = (key) => (key !== undefined ? String(key) : "");
@@ -720,7 +838,7 @@ function TreeDisplay({ treeData, onChange }) {
     // 检查base中是否有新增节点
     const hasNewNodes = base.some((node) => {
       const checkNodeHasNewFlag = (n) => {
-        if (n.操作 === "新增") return true;
+        if (n.操作 && n.操作.includes("新增")) return true;
         if (n.children && Array.isArray(n.children)) {
           return n.children.some(checkNodeHasNewFlag);
         }
@@ -730,127 +848,184 @@ function TreeDisplay({ treeData, onChange }) {
     });
 
     console.log("基础数据中包含新增节点:", hasNewNodes);
+    console.log("基础数据:", {
+      长度: base.length,
+      节点类型: base.map((node) => ({
+        key: node.key,
+        title: typeof node.title === "string" ? node.title : "组件",
+      })),
+    });
 
-    if (!deletedNodes.length && !replacedNodes.length) {
+    // 如果没有删除或替换节点，并且不是导出后的Excel，直接返回基础数据
+    if (!deletedNodes.length && !replacedNodes.length && !isExportedExcel) {
       console.log("没有删除或替换节点，返回基础数据");
       return base;
     }
 
     console.log("构建完整树数据:", {
-      base,
-      baseLength: base.length,
-      deletedNodes,
-      replacedNodes,
+      base: base.length,
+      deletedNodes: deletedNodes.length,
+      replacedNodes: replacedNodes.length,
     });
 
-    const buildDeletedTree = (nodes) =>
-      nodes.map((item) => {
-        // 标记当前节点为删除操作
-        if (item.node && item.node["操作"] === undefined) {
-          item.node["操作"] = "删除";
-        }
+    const buildDeletedTree = (nodes) => {
+      console.log("构建已删除树，节点数:", nodes.length);
+      if (nodes.length === 0) return [];
 
-        // 递归标记所有子节点为删除操作
-        const markChildrenAsDeleted = (node) => {
-          if (!node) return;
-
-          if (node["操作"] === undefined) {
-            node["操作"] = "删除";
+      return nodes
+        .map((item) => {
+          if (!item || !item.node) {
+            console.log("警告: 发现无效的删除节点项", item);
+            return null;
           }
 
-          if (node.children && node.children.length) {
-            node.children.forEach(markChildrenAsDeleted);
+          // 标记当前节点为删除操作
+          if (item.node && item.node["操作"] === undefined) {
+            item.node["操作"] = "删除";
           }
-        };
 
-        // 处理子节点
-        if (item.node && item.node.children) {
-          item.node.children.forEach(markChildrenAsDeleted);
-        }
+          // 递归标记所有子节点为删除操作
+          const markChildrenAsDeleted = (node) => {
+            if (!node) return;
 
-        return {
-          ...item.node,
-          title: (
-            <span>
-              {item.node.title}
-              <Button
-                size="small"
-                type="link"
-                style={{ marginLeft: 8 }}
-                onClick={() => handleRestore(item.node.key)}
-              >
-                恢复
-              </Button>
-            </span>
-          ),
-          children: item.node.children
-            ? buildDeletedTree(
-                item.node.children.map((child) => ({
-                  node: child,
-                  originParentKey: item.node.key,
-                }))
-              )
-            : undefined,
-        };
-      });
+            if (node["操作"] === undefined) {
+              node["操作"] = "删除";
+            }
 
-    const buildReplacedTree = (nodes) =>
-      nodes.map((item) => {
-        // 新增：渲染时带出原权限id和新权限id
-        const originalId = item.originalPermissionId;
-        const newId = item.node["权限id"];
-        return {
-          ...item.node,
-          title: (
-            <span>
-              {item.node.title}
-              <span style={{ marginLeft: 8, color: "#ff4d4f" }}>
-                {item.node["父级权限码"]
-                  ? `(新权限码: ${item.node["父级权限码"]})`
-                  : ""}
+            if (node.children && node.children.length) {
+              node.children.forEach(markChildrenAsDeleted);
+            }
+          };
+
+          // 处理子节点
+          if (item.node && item.node.children) {
+            item.node.children.forEach(markChildrenAsDeleted);
+          }
+
+          return {
+            ...item.node,
+            title: (
+              <span>
+                {item.node.title}
+                <Button
+                  size="small"
+                  type="link"
+                  style={{ marginLeft: 8 }}
+                  onClick={() => handleRestore(item.node.key)}
+                >
+                  恢复
+                </Button>
               </span>
-              <span style={{ marginLeft: 8, color: "#722ed1" }}>
-                {newId && originalId && newId !== originalId
-                  ? `(新权限id: ${newId})`
-                  : ""}
+            ),
+            children: item.node.children
+              ? buildDeletedTree(
+                  item.node.children.map((child) => ({
+                    node: child,
+                    originParentKey: item.node.key,
+                  }))
+                )
+              : undefined,
+          };
+        })
+        .filter(Boolean); // 过滤掉null项
+    };
+
+    const buildReplacedTree = (nodes) => {
+      console.log("构建已替换树，节点数:", nodes.length);
+      if (nodes.length === 0) return [];
+
+      return nodes
+        .map((item) => {
+          if (!item || !item.node) {
+            console.log("警告: 发现无效的替换节点项", item);
+            return null;
+          }
+
+          // 新增：渲染时带出原权限id和新权限id
+          const originalId = item.originalPermissionId;
+          const newId = item.node["权限id"];
+          return {
+            ...item.node,
+            title: (
+              <span>
+                {item.node.title}
+                <span style={{ marginLeft: 8, color: "#ff4d4f" }}>
+                  {item.node["父级权限码"]
+                    ? `(新权限码: ${item.node["父级权限码"]})`
+                    : ""}
+                </span>
+                <span style={{ marginLeft: 8, color: "#722ed1" }}>
+                  {newId && originalId && newId !== originalId
+                    ? `(新权限id: ${newId})`
+                    : ""}
+                </span>
+                <Button
+                  size="small"
+                  type="link"
+                  style={{ marginLeft: 8 }}
+                  onClick={() => handleRestoreReplaced(item.node.key)}
+                >
+                  恢复
+                </Button>
               </span>
-              <Button
-                size="small"
-                type="link"
-                style={{ marginLeft: 8 }}
-                onClick={() => handleRestoreReplaced(item.node.key)}
-              >
-                恢复
-              </Button>
-            </span>
-          ),
-          children: item.node.children
-            ? buildReplacedTree(
-                item.node.children.map((child) => ({
-                  node: child,
-                  originParentKey: item.node.key,
-                  originalPermissionId: child["原始权限id"] || child["权限id"],
-                }))
-              )
-            : undefined,
-        };
-      });
+            ),
+            children: item.node.children
+              ? buildReplacedTree(
+                  item.node.children.map((child) => ({
+                    node: child,
+                    originParentKey: item.node.key,
+                    originalPermissionId:
+                      child["原始权限id"] || child["权限id"],
+                  }))
+                )
+              : undefined,
+          };
+        })
+        .filter(Boolean); // 过滤掉null项
+    };
 
-    const result = [
-      ...base,
-      {
-        key: "deleted-root",
-        title: "已删除",
-        children: buildDeletedTree(deletedNodes),
-      },
-      {
-        key: "replaced-root",
-        title: "已替换",
-        children: buildReplacedTree(replacedNodes),
-      },
-    ];
+    // 构建结果树，包括基础数据和特殊根节点
+    const result = [...base];
 
-    console.log("最终树数据:", result);
+    // 只有当有删除节点时，才添加删除根节点
+    if (deletedNodes.length > 0) {
+      console.log("添加已删除根节点，包含", deletedNodes.length, "个节点");
+      const deletedChildren = buildDeletedTree(deletedNodes);
+      if (deletedChildren.length > 0) {
+        result.push({
+          key: "deleted-root",
+          title: "已删除",
+          children: deletedChildren,
+          isSpecialRoot: true,
+        });
+      } else {
+        console.log("警告: 已删除节点列表为空，不添加已删除根节点");
+      }
+    }
+
+    // 只有当有替换节点时，才添加替换根节点
+    if (replacedNodes.length > 0) {
+      console.log("添加已替换根节点，包含", replacedNodes.length, "个节点");
+      const replacedChildren = buildReplacedTree(replacedNodes);
+      if (replacedChildren.length > 0) {
+        result.push({
+          key: "replaced-root",
+          title: "已替换",
+          children: replacedChildren,
+          isSpecialRoot: true,
+        });
+      } else {
+        console.log("警告: 已替换节点列表为空，不添加已替换根节点");
+      }
+    }
+
+    console.log("最终树数据:", {
+      总节点数: result.length,
+      节点类型: result.map((node) => ({
+        key: node.key,
+        title: typeof node.title === "string" ? node.title : "组件",
+      })),
+    });
     return result;
   };
 
@@ -1337,6 +1512,15 @@ function TreeDisplay({ treeData, onChange }) {
           >
             展开所有节点
           </Button>
+          {isExportedExcel && (
+            <span style={{ marginLeft: 16, color: "#1890ff" }}>
+              当前为导出后的Excel文件
+              {deletedNodes.length > 0 &&
+                ` (包含${deletedNodes.length}个已删除节点)`}
+              {replacedNodes.length > 0 &&
+                ` (包含${replacedNodes.length}个已替换节点)`}
+            </span>
+          )}
         </div>
       </div>
       <div className="tree-container">
